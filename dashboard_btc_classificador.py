@@ -1,13 +1,14 @@
-# Criar script com dashboard em Streamlit
-streamlit_code = """
+# Atualizar o código do dashboard para buscar dados da Binance em tempo real
+streamlit_realtime_code = """
 import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
+import requests
 
-# === Funções de indicadores técnicos ===
+# === Indicadores técnicos ===
 def compute_rsi(series, window=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -30,64 +31,59 @@ def create_sequences(data, window_size):
         X.append(data[i-window_size:i])
     return np.array(X)
 
-# === Interface Streamlit ===
-st.title("📈 Previsão BTC/USD - Classificação por Rede Neural")
-
-uploaded_file = st.file_uploader("Faça upload do arquivo CSV com dados de 1h do BTC/USDC", type=["csv"])
-
-if uploaded_file:
-    df = pd.read_csv(uploaded_file, header=None)
-    df.columns = [
+def get_binance_data(symbol='BTCUSDT', interval='1h', limit=200):
+    url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+    data = requests.get(url).json()
+    df = pd.DataFrame(data, columns=[
         'Open Time', 'Open', 'High', 'Low', 'Close', 'Volume',
         'Close Time', 'Quote Asset Volume', 'Number of Trades',
         'Taker Buy Base Volume', 'Taker Buy Quote Volume', 'Ignore'
-    ]
-    df['Open Time'] = pd.to_datetime(df['Open Time'], unit='us')
-    cols_to_convert = ['Open', 'High', 'Low', 'Close', 'Volume',
-                       'Quote Asset Volume', 'Taker Buy Base Volume', 'Taker Buy Quote Volume']
-    df[cols_to_convert] = df[cols_to_convert].astype(float)
+    ])
+    df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        df[col] = df[col].astype(float)
+    return df
 
-    # Calcular indicadores
+# === Streamlit UI ===
+st.title("📡 Previsão BTC/USDT em Tempo Real")
+
+if st.button("🔄 Obter e Prever Dados em Tempo Real"):
+    df = get_binance_data()
+
+    # Indicadores técnicos
     df['RSI'] = compute_rsi(df['Close'])
     df['MACD'] = compute_macd(df['Close'])
 
-    # Remover NaNs
     df.dropna(inplace=True)
 
-    # Normalizar
+    # Normalização
     features = df[['Close', 'RSI', 'MACD']]
     scaler = MinMaxScaler()
     scaled_features = scaler.fit_transform(features)
 
-    # Criar sequência
+    # Criar janelas
     window_size = 30
     X = create_sequences(scaled_features, window_size)
 
-    # Carregar modelo treinado
     try:
         model = load_model("modelo_btc_classificador.h5")
         preds = model.predict(X)
         pred_labels = (preds > 0.5).astype(int)
 
-        # Mostrar gráfico
-        st.subheader("🔍 Previsões nas últimas 100 janelas")
+        # Última previsão
+        ultima_classe = int(pred_labels[-1][0])
+        st.metric(label="📊 Última Previsão", value="Alta 📈" if ultima_classe == 1 else "Queda 📉")
+
+        # Gráfico
+        st.subheader("📈 Histórico das últimas 100 previsões")
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(pred_labels[-100:], marker='o', label='Previsão')
-        ax.set_title("Classe prevista: 1 = Alta, 0 = Queda")
-        ax.set_xlabel("Tempo (últimas janelas)")
-        ax.set_ylabel("Classe")
+        ax.set_title("1 = Alta, 0 = Queda")
+        ax.set_xlabel("Tempo")
+        ax.set_ylabel("Classe Prevista")
         ax.legend()
         st.pyplot(fig)
-
-        st.success("Previsão concluída com sucesso!")
 
     except Exception as e:
         st.error(f"Erro ao carregar modelo: {e}")
 """
-
-# Salvar script do dashboard
-streamlit_path = "/mnt/data/dashboard_btc_classificador.py"
-with open(streamlit_path, "w") as f:
-    f.write(streamlit_code)
-
-streamlit_path
